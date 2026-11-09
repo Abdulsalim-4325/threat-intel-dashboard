@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+import json
 
 # Connect directly to your live Render backend
 API_BASE_URL = "https://threat-intel-api-u5pa.onrender.com/api/v1"
@@ -25,27 +26,39 @@ def check_health():
     except:
         return False
 
-# Fetch STIX Bundle or indicators from live backend
+# Fetch STIX Bundle from live backend
 @st.cache_data(ttl=30)
-def fetch_indicators():
+def fetch_stix_bundle():
     try:
-        res = requests.get(f"{API_BASE_URL}/bundle")
-        if res.status_code == 200:
-            return res.json()
+        response = requests.get(f"{API_BASE_URL}/stix/bundle?limit=100")
+        if response.status_code == 200:
+            return response.json()
         return None
     except:
         return None
 
 is_online = check_health()
-data = fetch_indicators()
+data = fetch_stix_bundle()
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Cloud Backend Status", "🟢 ONLINE (Render)" if is_online else "🔴 OFFLINE")
 
 if data and "objects" in data:
     objects = data["objects"]
-    indicators = [obj for obj in objects if obj.get("type") == "indicator"]
-    malware = [obj for obj in objects if obj.get("type") == "malware"]
+    
+    # Handle objects whether they are parsed dicts or JSON strings
+    parsed_objects = []
+    for obj in objects:
+        if isinstance(obj, str):
+            try:
+                parsed_objects.append(json.loads(obj))
+            except:
+                pass
+        elif isinstance(obj, dict):
+            parsed_objects.append(obj)
+            
+    indicators = [obj for obj in parsed_objects if obj.get("type") == "indicator"]
+    malware = [obj for obj in parsed_objects if obj.get("type") == "malware"]
     
     col2.metric("Active STIX Indicators", len(indicators))
     col3.metric("Malware Signatures", len(malware))
@@ -59,6 +72,7 @@ if data and "objects" in data:
             "Created": ioc.get("created", "N/A"),
             "Name": ioc.get("name", "Threat Indicator"),
             "Pattern": ioc.get("pattern", "N/A"),
+            "Confidence": ioc.get("confidence", "N/A"),
             "Valid From": ioc.get("valid_from", "N/A")
         })
     
@@ -66,7 +80,7 @@ if data and "objects" in data:
         df = pd.DataFrame(table_data)
         st.dataframe(df, use_container_width=True)
     else:
-        st.info("Backend is live, but current STIX bundle is empty. Trigger an ingestion via the API!")
+        st.info("Backend is live, but current STIX bundle objects list is empty.")
 else:
     col2.metric("Active STIX Indicators", 0)
     col3.metric("Malware Signatures", 0)
